@@ -4,6 +4,8 @@ const prompt = 'jisp >'
 
 process.stdout.write(prompt)
 process.stdin.on('data', function (inputStdin) {
-  process.stdout.write(evalScheme(inputStdin.toString('utf8')))
+  let ev = evalScheme(inputStdin.toString('utf8'))
+  // process.stdout.write(ev[0] + '\n' + ev[1] + '\n' + JSON.stringify(ev[2]) + '\n')
+  process.stdout.write(ev[1] + '\n')
   process.stdout.write(prompt)
 })
