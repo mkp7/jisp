@@ -13,6 +13,11 @@ let envStack = [{
   },
   '*': (...nums) => (nums.length === 0 ? 1 : nums.reduce((a, b) => a * b)),
   '/': (...nums) => (nums.length === 0 ? 0 : nums.reduce((a, b) => a / b)),
+  '=': (a, b) => a === b,
+  '<': (a, b) => a < b,
+  '<=': (a, b) => a <= b,
+  '>': (a, b) => a > b,
+  '>=': (a, b) => a >= b,
   'PI': 3.14159
 }]
 
@@ -66,29 +71,123 @@ function parseBoolean (code) {
   ]
 }
 
+function metaParse (code) {
+  const ptr1 = /^\s*[^\s\(\)]+\s*/
+  const ptr2 = /^\s*\(\s*([^\s\(\)]+\s*)*/
+  const ptr3 = /^\s*\)\s*/
+
+  let match = ptr1.exec(code)
+  if (match !== null) {
+    return code.slice(match[0].length)
+  }
+
+  match = ptr2.exec(code)
+  if (match === null) {
+    return null
+  }
+
+  let rcode = code.slice(match[0].length)
+  match = ptr3.exec(rcode)
+  if (match === null) {
+    return metaParse(rcode)
+  }
+
+  return rcode.slice(match[0].length)
+}
+
 // return [data:(value || null), rem_code: string]
 function evalConditional (code, env, lev) {
   const ptr = /^(\s*\(\s*if)(\s|\))/
+  const ptrC = /^\s*\)\s*/
 
   let match = ptr.exec(code)
   if (match === null) {
-    return [
-      null,
-      code,
-      'JispError: Not conditional'
-    ]
+    return [null, code, 'JispError: Not conditional']
   }
 
-  let [predicate, rcode, err] = evalValue(code.slice(match[1].length))
-  if (predicate === null) {
+  let [value, rcode, err] = evalValue(code.slice(match[1].length))
+  if (value === null) {
     return [null, rcode, err]
   }
 
-  if (predicate === false) {
-    // meta parse true case and eval and return false case
+  // meta parse true case and eval and return false case
+  if (value === false) {
+    rcode = metaParse(rcode)
+    if (rcode === null) {
+      return [null, code, 'JispError: Too few operands in form']
+    }
+
+    [value, rcode, err] = evalValue(rcode)
+    match = ptrC.exec(rcode)
+    if (match !== null) {
+      return [
+        value === null ? undefined : value,
+        rcode.slice(match[0].length),
+        err
+      ]
+    }
+
+    return [null, code, 'JispError: Too many operands in form']
   }
 
   // meta parse false case and eval and return true case
+  [value, rcode, err] = evalValue(rcode)
+  if (value === null) {
+    return [value, rcode, err]
+  }
+
+  let rrcode = metaParse(rcode)
+  if (rrcode === null) {
+    match = ptrC.exec(rcode)
+    if (match === null) {
+      return [null, code, 'JispError: Too many operands in form']
+    }
+
+    return [value, rcode.slice(match[0].length), '']
+  }
+
+  match = ptrC.exec(rrcode)
+  if (match === null) {
+    return [null, code, 'JispError: Too many operands in form']
+  }
+
+  return [value, rrcode.slice(match[0].length), '']
+}
+
+// return [data:(undefined || null), rem_code: string]
+function evalDefine (code, env, lev) {
+  const ptr = /^(\s*\(\s*define)(\s|\))/
+  const ptrS = /^\s*([^\s\(\)]+)/
+  const ptrC = /^\s*\)\s*/
+
+  let match = ptr.exec(code)
+  if (match === null) {
+    return [null, code, 'JispError: Not definition']
+  }
+
+  let rcode = code.slice(match[0].length)
+  match = ptrS.exec(rcode)
+  if (match === null) {
+    return [null, code, 'JispError: Not a Symbol']
+  }
+
+  const sym = match[1]
+  rcode = rcode.slice(match[0].length)
+
+  let val, err
+  [val, rcode, err] = evalValue(rcode)
+  if (val === null) {
+    return [null, code, err]
+  }
+
+  match = ptrC.exec(rcode)
+  if (match === null) {
+    return [null, code, 'JispError: Expected ")"']
+  }
+
+  envStack[0][sym] = val
+
+  return [undefined, rcode.slice(match[0].length), '']
 }
 
 // return [data:(number || null), rem_code: string]
@@ -171,6 +270,8 @@ function evalFunction (code, env, lev) {
 const evaluaters = [
   parseNumber,
   parseBoolean,
+  evalConditional,
+  evalDefine,
   evalSymbol,
   evalFunction
 ]
