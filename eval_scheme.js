@@ -21,7 +21,7 @@ let envStack = [{
   'PI': 3.14159
 }]
 
-// return [data:(number || null), rem_code: string]
+// returns [data:(number || null), rem_code: string, err: string]
 function parseNumber (code) {
   const ptr = /^\s*(-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?)\s*/
 
@@ -41,7 +41,7 @@ function parseNumber (code) {
   ]
 }
 
-// return [data:(boolean || null), rem_code: string]
+// returns [data:(boolean || null), rem_code: string, err: string]
 function parseBoolean (code) {
   const ptrTrue = /^(\s*(true|#t))(\s|\))/
   const ptrFalse = /^(\s*(false|#f))(\s|\))/
@@ -71,31 +71,7 @@ function parseBoolean (code) {
   ]
 }
 
-function metaParse (code) {
-  const ptr1 = /^\s*[^\s\(\)]+\s*/
-  const ptr2 = /^\s*\(\s*([^\s\(\)]+\s*)*/
-  const ptr3 = /^\s*\)\s*/
-
-  let match = ptr1.exec(code)
-  if (match !== null) {
-    return code.slice(match[0].length)
-  }
-
-  match = ptr2.exec(code)
-  if (match === null) {
-    return null
-  }
-
-  let rcode = code.slice(match[0].length)
-  match = ptr3.exec(rcode)
-  if (match === null) {
-    return metaParse(rcode)
-  }
-
-  return rcode.slice(match[0].length)
-}
-
-// return [data:(value || null), rem_code: string]
+// returns [data:(value || null), rem_code: string, err: string]
 function evalConditional (code, env, lev) {
   const ptr = /^(\s*\(\s*if)(\s|\))/
   const ptrC = /^\s*\)\s*/
@@ -111,12 +87,14 @@ function evalConditional (code, env, lev) {
   }
 
   // meta parse true case and eval and return false case
+  let scheme
   if (value === false) {
-    rcode = metaParse(rcode)
-    if (rcode === null) {
+    scheme = parseScheme(rcode)
+    if (scheme[0] === null) {
       return [null, code, 'JispError: Too few operands in form']
     }
 
+    rcode = scheme[1];
     [value, rcode, err] = evalValue(rcode)
     match = ptrC.exec(rcode)
     if (match !== null) {
@@ -136,8 +114,8 @@ function evalConditional (code, env, lev) {
     return [value, rcode, err]
   }
 
-  let rrcode = metaParse(rcode)
-  if (rrcode === null) {
+  scheme = parseScheme(rcode)
+  if (scheme[0] === null) {
     match = ptrC.exec(rcode)
     if (match === null) {
       return [null, code, 'JispError: Too many operands in form']
@@ -146,15 +124,16 @@ function evalConditional (code, env, lev) {
     return [value, rcode.slice(match[0].length), '']
   }
 
-  match = ptrC.exec(rrcode)
+  rcode = scheme[1]
+  match = ptrC.exec(rcode)
   if (match === null) {
     return [null, code, 'JispError: Too many operands in form']
   }
 
-  return [value, rrcode.slice(match[0].length), '']
+  return [value, rcode.slice(match[0].length), '']
 }
 
-// return [data:(undefined || null), rem_code: string]
+// returns [data:(undefined || null), rem_code: string, err: string]
 function evalDefine (code, env, lev) {
   const ptr = /^(\s*\(\s*define)(\s|\))/
   const ptrS = /^\s*([^\s\(\)]+)/
@@ -190,7 +169,7 @@ function evalDefine (code, env, lev) {
   return [undefined, rcode.slice(match[0].length), '']
 }
 
-// return [data:(number || null), rem_code: string]
+// returns [data:(number || null), rem_code: string, err: string]
 function evalSymbol (code, env, lev) {
   const ptr = /^\s*([^\s\(\)]+)/
 
@@ -217,6 +196,73 @@ function evalSymbol (code, env, lev) {
     ''
   ]
 }
+
+// returns [data:(scheme_exp || null), rem_code: string, err: string]
+function parseScheme (code) {
+  const ptrSingle = /^\s*[^\s\(\)]+\s*/
+  let match = ptrSingle.exec(code)
+  if (match !== null) {
+    return [
+      match[0],
+      code.slice(match[0].length),
+      ''
+    ]
+  }
+
+  const ptrStart = /^\s*\(\s*([^\s\(\)]+\s*)*/
+  match = ptrStart.exec(code)
+  if (match === null) {
+    return [null, code, 'JispError: Not Scheme expression']
+  }
+
+  let scheme = match[0]
+  let rcode = code.slice(match[0].length)
+  const recurse = parseScheme(rcode)
+  if (recurse[0] !== null) {
+    scheme += recurse[0]
+    rcode = recurse[1]
+  }
+
+  const ptrEnd = /^\s*([^\s\(\)]+\s*)*\s*\)/
+  match = ptrEnd.exec(rcode)
+  if (match === null) {
+    return [null, code, 'JispError: Expected ")"']
+  }
+
+  return [
+    scheme + match[0],
+    rcode.slice(match[0].length),
+    ''
+  ]
+}
+
+// returns [data:(lambda_exp([params, body]) || null), rem_code: string, err: string]
+function parseLambda (code, env, lev) {
+  const ptr = /^\s*\(\s*lambda\s+\((([^\s\(\)]+\s*)+)\)/
+
+  let match = ptr.exec(code) // parse params
+  if (match === null) {
+    return [null, code, 'JispError: Not lambda expression']
+  }
+
+  const params = match[1].replace(/\s+/, ' ').trim().split(' ')
+  let rcode = code.slice(match[0].length)
+
+  let scheme = parseScheme(rcode)
+  if (scheme[0] === null) {
+    return [null, code, 'JispError: Expected scheme expression']
+  }
+
+  return [[params, scheme[0]], scheme[1], '']
+}
+
+//
+// function evalLambda (code, env, lev) {
+//   let [lExpr, rcode, err] = parseLambda(code, env, lev)
+//   if (lExpr === null) {
+
+//   }
+// }
 
 // (returns: (data || null, rcode))
 function evalFunction (code, env, lev) {
@@ -276,7 +322,7 @@ const evaluaters = [
   evalFunction
 ]
 
-// return [data:(number || null), rem_code: string]
+// returns [data:(number || null), rem_code: string, err: string]
 function evalValue (code, env, lev) {
   return evaluaters.reduce((a, f) => {
     if (a[0] !== null) {
