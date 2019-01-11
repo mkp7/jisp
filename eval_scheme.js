@@ -72,7 +72,7 @@ function parseBoolean (code) {
 }
 
 // returns [data:(value || null), rem_code: string, err: string]
-function evalConditional (code, env, lev) {
+function evalConditional (code, env) {
   const ptr = /^(\s*\(\s*if)(\s|\))/
   const ptrC = /^\s*\)\s*/
 
@@ -81,7 +81,7 @@ function evalConditional (code, env, lev) {
     return [null, code, 'JispError: Not conditional']
   }
 
-  let [value, rcode, err] = evalValue(code.slice(match[1].length))
+  let [value, rcode, err] = evalValue(code.slice(match[1].length), env)
   if (value === null) {
     return [null, rcode, err]
   }
@@ -95,7 +95,7 @@ function evalConditional (code, env, lev) {
     }
 
     rcode = scheme[1];
-    [value, rcode, err] = evalValue(rcode)
+    [value, rcode, err] = evalValue(rcode, env)
     match = ptrC.exec(rcode)
     if (match !== null) {
       return [
@@ -109,7 +109,7 @@ function evalConditional (code, env, lev) {
   }
 
   // meta parse false case and eval and return true case
-  [value, rcode, err] = evalValue(rcode)
+  [value, rcode, err] = evalValue(rcode, env)
   if (value === null) {
     return [value, rcode, err]
   }
@@ -134,7 +134,7 @@ function evalConditional (code, env, lev) {
 }
 
 // returns [data:(undefined || null), rem_code: string, err: string]
-function evalDefine (code, env, lev) {
+function evalDefine (code, env) {
   const ptr = /^(\s*\(\s*define)(\s|\))/
   const ptrS = /^\s*([^\s\(\)]+)/
   const ptrC = /^\s*\)\s*/
@@ -154,7 +154,7 @@ function evalDefine (code, env, lev) {
   rcode = rcode.slice(match[0].length)
 
   let val, err
-  [val, rcode, err] = evalValue(rcode)
+  [val, rcode, err] = evalValue(rcode, env)
   if (val === null) {
     return [null, code, err]
   }
@@ -170,7 +170,7 @@ function evalDefine (code, env, lev) {
 }
 
 // returns [data:(number || null), rem_code: string, err: string]
-function evalSymbol (code, env, lev) {
+function evalSymbol (code, env) {
   const ptr = /^\s*([^\s\(\)]+)/
 
   let match = ptr.exec(code)
@@ -182,7 +182,12 @@ function evalSymbol (code, env, lev) {
     ]
   }
 
-  if (envStack[0][match[1]] === undefined) {
+  let i = env
+  while (i > 0 && envStack[i][match[1]] === undefined) {
+    i--
+  }
+
+  if (envStack[i][match[1]] === undefined) {
     return [
       null,
       code,
@@ -191,7 +196,7 @@ function evalSymbol (code, env, lev) {
   }
 
   return [
-    envStack[0][match[1]],
+    envStack[i][match[1]],
     code.slice(match[0].length),
     ''
   ]
@@ -217,10 +222,11 @@ function parseScheme (code) {
 
   let scheme = match[0]
   let rcode = code.slice(match[0].length)
-  const recurse = parseScheme(rcode)
-  if (recurse[0] !== null) {
+  let recurse = parseScheme(rcode)
+  while (recurse[0] !== null) {
     scheme += recurse[0]
     rcode = recurse[1]
+    recurse = parseScheme(rcode)
   }
 
   const ptrEnd = /^\s*([^\s\(\)]+\s*)*\s*\)/
@@ -237,8 +243,9 @@ function parseScheme (code) {
 }
 
 // returns [data:(lambda_exp([params, body]) || null), rem_code: string, err: string]
-function parseLambda (code, env, lev) {
+function parseLambda (code, env) {
   const ptr = /^\s*\(\s*lambda\s+\((([^\s\(\)]+\s*)+)\)/
+  const ptrEnd = /^\s*\)/
 
   let match = ptr.exec(code) // parse params
   if (match === null) {
@@ -253,19 +260,71 @@ function parseLambda (code, env, lev) {
     return [null, code, 'JispError: Expected scheme expression']
   }
 
-  return [[params, scheme[0]], scheme[1], '']
+  rcode = scheme[1]
+  match = ptrEnd.exec(rcode)
+  if (match === null) {
+    return [null, code, 'JispError: Expected ")"']
+  }
+
+  return [[params, scheme[0]], rcode.slice(match[0].length), '']
 }
 
-//
-// function evalLambda (code, env, lev) {
-//   let [lExpr, rcode, err] = parseLambda(code, env, lev)
-//   if (lExpr === null) {
+// returns [data:(array[values] || null), rem_code: string, err: string]
+function evalValues (code, env) {
+  const ptrEnd = /^\s*(\)\s*)?$/
+  let match = ptrEnd.exec(code)
+  if (match !== null) {
+    return [[], code, '']
+  }
 
-//   }
-// }
+  let data = evalValue(code, env)
+  if (data[0] === null) {
+    return [null, code, data[2]]
+  }
+
+  let values = evalValues(data[1], env)
+  if (values[0] === null) {
+    return [null, code, values[2]]
+  }
+
+  return [[data[0], ...values[0]], values[1], '']
+}
+
+// returns [data:(number || null), rem_code: string, err: string]
+function evalLambda (code, env) {
+  const ptrStart = /^\s*\(/
+  let match = ptrStart.exec(code)
+  if (match === null) {
+    return [null, code, 'JispError: Not a Lambda expression']
+  }
+
+  let [lExpr, rcode, err] = parseLambda(code.slice(match[0].length), env)
+  if (lExpr === null) {
+    return [null, code, err]
+  }
+
+  const data = evalValues(rcode, env)
+  if (data[0] === null) {
+    return [null, code, data[2]]
+  }
+
+  // Create &| pass new environment data[0] and lExpr[0]
+  if (lExpr[0].length !== data[0].length) {
+    return [null, code, 'JispError: More or less number of arguments']
+  }
+
+  const scope = {}
+  lExpr[0].forEach((k, i) => (scope[k] = data[0][i]))
+
+  envStack.push(scope)
+  const val = evalScheme(lExpr[1], env + 1)
+  envStack.pop()
+
+  return val
+}
 
 // (returns: (data || null, rcode))
-function evalFunction (code, env, lev) {
+function evalFunction (code, env) {
   const ptr = /^(\s*\(\s*([^\s\)]+))(\s|\))/
 
   let match = ptr.exec(code) // match anything other than ' ' or ')'
@@ -282,7 +341,7 @@ function evalFunction (code, env, lev) {
   // iterate and eval proc-args while not valid end or err
   let [rcode, val, args] = [code.slice(match[1].length), 0, []]
   while (val !== null) {
-    [val, rcode] = evalValue(rcode, env, lev)
+    [val, rcode] = evalValue(rcode, env)
     if (val !== null) {
       args.push(val)
     }
@@ -305,6 +364,31 @@ function evalFunction (code, env, lev) {
     ]
   }
 
+  // check & eval lambda expr
+  if (Array.isArray(envStack[0][proc])) {
+    // Create &| pass new environment data[0] and lExpr[0]
+    if (envStack[0][proc][0].length !== args.length) {
+      return [null, code, 'JispError: More or less number of arguments']
+    }
+
+    const scope = {}
+    envStack[0][proc][0].forEach((k, i) => (scope[k] = args[i]))
+
+    envStack.push(scope)
+    const val = evalScheme(envStack[0][proc][1], env + 1)
+    envStack.pop()
+
+    return val
+  }
+
+  if (typeof envStack[0][proc] !== 'function') { // check valid function
+    return [
+      null,
+      code,
+      `JispError: ${proc} is not a function`
+    ]
+  }
+
   // if valid then call proc with args and return value with rcode
   return [
     envStack[0][proc](...args),
@@ -319,36 +403,37 @@ const evaluaters = [
   evalConditional,
   evalDefine,
   evalSymbol,
-  evalFunction
+  evalFunction,
+  parseLambda
 ]
 
 // returns [data:(number || null), rem_code: string, err: string]
-function evalValue (code, env, lev) {
+function evalValue (code, env) {
   return evaluaters.reduce((a, f) => {
     if (a[0] !== null) {
       return a
     }
 
-    return f(code, env, lev)
+    return f(code, env)
   }, [null, code, ''])
 }
 
 // (returns: (err, msg, code) || (noerr, data, rcode))
-const evalScheme = function (code, env = 0, lev = 0) {
+const evalScheme = function (code, env = 0) {
   let [val, rcode, data, err] = [0, code, '', '']
 
   while (val !== null) {
-    [val, rcode, err] = evalValue(rcode, env, lev)
+    [val, rcode, err] = evalValue(rcode, env)
     if (val !== null) {
       data = val
     }
   }
 
   if (/^\s*$/.exec(rcode) === null) {
-    return [err, code]
+    return [null, code, err]
   }
 
-  return [data, rcode]
+  return [data, '', '']
 }
 
-module.exports = evalScheme
+module.exports = { evalScheme, parseScheme }
