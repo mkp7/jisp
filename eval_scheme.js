@@ -356,7 +356,12 @@ function evalFunction (code, env) {
     ]
   }
 
-  if (envStack[0][proc] === undefined) { // check valid proc and args
+  let i = env
+  while (i > 0 && envStack[i][match[1]] === undefined) {
+    i--
+  }
+
+  if (envStack[i][proc] === undefined) { // check valid proc and args
     return [
       null,
       code,
@@ -365,23 +370,27 @@ function evalFunction (code, env) {
   }
 
   // check & eval lambda expr
-  if (Array.isArray(envStack[0][proc])) {
+  if (Array.isArray(envStack[i][proc])) {
     // Create &| pass new environment data[0] and lExpr[0]
-    if (envStack[0][proc][0].length !== args.length) {
+    if (envStack[i][proc][0].length !== args.length) {
       return [null, code, 'JispError: More or less number of arguments']
     }
 
     const scope = {}
-    envStack[0][proc][0].forEach((k, i) => (scope[k] = args[i]))
+    envStack[i][proc][0].forEach((k, i) => (scope[k] = args[i]))
 
     envStack.push(scope)
-    const val = evalScheme(envStack[0][proc][1], env + 1)
+    const val = evalScheme(envStack[i][proc][1], env + 1)
     envStack.pop()
 
-    return val
+    if (val[0] === null) {
+      return val
+    }
+
+    return [val[0], rcode.slice(match[0].length), '']
   }
 
-  if (typeof envStack[0][proc] !== 'function') { // check valid function
+  if (typeof envStack[i][proc] !== 'function') { // check valid function
     return [
       null,
       code,
@@ -391,7 +400,7 @@ function evalFunction (code, env) {
 
   // if valid then call proc with args and return value with rcode
   return [
-    envStack[0][proc](...args),
+    envStack[i][proc](...args),
     rcode.slice(match[0].length),
     ''
   ]
@@ -404,7 +413,8 @@ const evaluaters = [
   evalDefine,
   evalSymbol,
   evalFunction,
-  parseLambda
+  parseLambda,
+  evalLambda
 ]
 
 // returns [data:(number || null), rem_code: string, err: string]
