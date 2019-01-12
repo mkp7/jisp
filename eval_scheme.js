@@ -89,7 +89,7 @@ function evalConditional (code, env) {
   // meta parse true case and eval and return false case
   let scheme
   if (value === false) {
-    scheme = parseScheme(rcode)
+    scheme = parseScheme(rcode, env)
     if (scheme[0] === null) {
       return [null, code, 'JispError: Too few operands in form']
     }
@@ -114,7 +114,7 @@ function evalConditional (code, env) {
     return [value, rcode, err]
   }
 
-  scheme = parseScheme(rcode)
+  scheme = parseScheme(rcode, env)
   if (scheme[0] === null) {
     match = ptrC.exec(rcode)
     if (match === null) {
@@ -203,7 +203,7 @@ function evalSymbol (code, env) {
 }
 
 // returns [data:(scheme_exp || null), rem_code: string, err: string]
-function parseScheme (code) {
+function parseScheme (code, env) {
   const ptrSingle = /^\s*[^\s\(\)]+\s*/
   let match = ptrSingle.exec(code)
   if (match !== null) {
@@ -222,11 +222,11 @@ function parseScheme (code) {
 
   let scheme = match[0]
   let rcode = code.slice(match[0].length)
-  let recurse = parseScheme(rcode)
+  let recurse = parseScheme(rcode, env)
   while (recurse[0] !== null) {
     scheme += recurse[0]
     rcode = recurse[1]
-    recurse = parseScheme(rcode)
+    recurse = parseScheme(rcode, env)
   }
 
   const ptrEnd = /^\s*([^\s\(\)]+\s*)*\s*\)/
@@ -255,7 +255,7 @@ function parseLambda (code, env) {
   const params = match[1].replace(/\s+/, ' ').trim().split(' ')
   let rcode = code.slice(match[0].length)
 
-  let scheme = parseScheme(rcode)
+  let scheme = parseScheme(rcode, env)
   if (scheme[0] === null) {
     return [null, code, 'JispError: Expected scheme expression']
   }
@@ -324,6 +324,60 @@ function evalLambda (code, env) {
 }
 
 // (returns: (data || null, rcode))
+function evalLambdaExp (code, env) {
+  const ptrStart = /^\s*\(\s*/
+
+  let match = ptrStart.exec(code)
+  if (match === null) { // check valid proc start
+    return [
+      null,
+      code,
+      'JispError: Not a lambda expression'
+    ]
+  }
+  // check expression evaluates to lambda
+  let lambda = evalValue(code.slice(match[0].length), env)
+  if (Array.isArray(lambda[0])) {
+    // iterate and eval proc-args while not valid end or err
+    let [rcode, tmp, args] = [lambda[1], 0, []]
+    while (tmp !== null) {
+      [tmp, rcode] = evalValue(rcode, env)
+      if (tmp !== null) {
+        args.push(tmp)
+      }
+    }
+
+    let match = /^\s*\)\s*/.exec(rcode) // check valid proc end
+    if (match === null) {
+      return [
+        null,
+        code,
+        'JispError: Expected ")"'
+      ]
+    }
+
+    if (lambda[0][0].length !== args.length) {
+      return [null, code, 'JispError: More or less number of arguments']
+    }
+
+    const scope = {}
+    lambda[0][0].forEach((k, i) => (scope[k] = args[i]))
+
+    envStack.push(scope)
+    const val = evalScheme(lambda[0][1], env + 1)
+    envStack.pop()
+
+    if (val[0] === null) {
+      return val
+    }
+
+    return [val[0], rcode.slice(match[0].length), '']
+  }
+
+  return [null, code, '']
+}
+
+// (returns: (data || null, rcode))
 function evalFunction (code, env) {
   const ptr = /^(\s*\(\s*([^\s\)]+))(\s|\))/
 
@@ -369,27 +423,6 @@ function evalFunction (code, env) {
     ]
   }
 
-  // check & eval lambda expr
-  if (Array.isArray(envStack[i][proc])) {
-    // Create &| pass new environment data[0] and lExpr[0]
-    if (envStack[i][proc][0].length !== args.length) {
-      return [null, code, 'JispError: More or less number of arguments']
-    }
-
-    const scope = {}
-    envStack[i][proc][0].forEach((k, i) => (scope[k] = args[i]))
-
-    envStack.push(scope)
-    const val = evalScheme(envStack[i][proc][1], env + 1)
-    envStack.pop()
-
-    if (val[0] === null) {
-      return val
-    }
-
-    return [val[0], rcode.slice(match[0].length), '']
-  }
-
   if (typeof envStack[i][proc] !== 'function') { // check valid function
     return [
       null,
@@ -412,9 +445,10 @@ const evaluaters = [
   evalConditional,
   evalDefine,
   evalSymbol,
-  evalFunction,
   parseLambda,
-  evalLambda
+  evalLambda,
+  evalLambdaExp,
+  evalFunction
 ]
 
 // returns [data:(number || null), rem_code: string, err: string]
