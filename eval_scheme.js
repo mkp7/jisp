@@ -21,6 +21,12 @@ let envStack = [{
   'PI': 3.14159
 }]
 
+// function LambdaExpression (params, code, env) {
+//   this.params = params
+//   this.code = code
+//   this.env = env
+// }
+
 // returns [data:(number || null), rem_code: string, err: string]
 function parseNumber (code) {
   const ptr = /^\s*(-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?)\s*/
@@ -317,8 +323,18 @@ function evalLambda (code, env) {
   lExpr[0].forEach((k, i) => (scope[k] = data[0][i]))
 
   envStack.push(scope)
+  if (lExpr.length === 3) {
+    envStack.push(lExpr[2])
+    env++
+  }
   const val = evalScheme(lExpr[1], env + 1)
+  if (Array.isArray(val[0])) {
+    val[0][2] = scope
+  }
   envStack.pop()
+  if (lExpr.length === 3) {
+    envStack.pop()
+  }
 
   return val
 }
@@ -364,8 +380,18 @@ function evalLambdaExp (code, env) {
     lambda[0][0].forEach((k, i) => (scope[k] = args[i]))
 
     envStack.push(scope)
+    if (lambda[0].length === 3) {
+      envStack.push(lambda[0][2])
+      env++
+    }
     const val = evalScheme(lambda[0][1], env + 1)
+    if (Array.isArray(val[0])) {
+      val[0][2] = scope
+    }
     envStack.pop()
+    if (lambda[0].length === 3) {
+      envStack.pop()
+    }
 
     if (val[0] === null) {
       return val
