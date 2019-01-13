@@ -18,7 +18,7 @@ let envStack = [{
   '<=': (a, b) => a <= b,
   '>': (a, b) => a > b,
   '>=': (a, b) => a >= b,
-  'PI': 3.14159
+  'pi': 3.141592653
 }]
 
 // function LambdaExpression (params, code, env) {
