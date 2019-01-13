@@ -1,31 +1,18 @@
-let envStack = [{
-  '+': (...nums) => (nums.length === 0 ? 0 : nums.reduce((a, b) => a + b)),
-  '-': (...nums) => {
-    if (nums.length === 0) {
-      return 0
-    }
+function LambdaExpression (params, code, env) {
+  this.params = params
+  this.code = code
+  this.env = env
+}
 
-    if (nums.length === 1) {
-      return -nums[0]
-    }
+// returns [data || undefined]
+function searchEnv (env, key) {
+  let i = env.length - 1
+  while (i > 0 && env[i][key] === undefined) {
+    i--
+  }
 
-    return nums.reduce((a, b) => a - b)
-  },
-  '*': (...nums) => (nums.length === 0 ? 1 : nums.reduce((a, b) => a * b)),
-  '/': (...nums) => (nums.length === 0 ? 0 : nums.reduce((a, b) => a / b)),
-  '=': (a, b) => a === b,
-  '<': (a, b) => a < b,
-  '<=': (a, b) => a <= b,
-  '>': (a, b) => a > b,
-  '>=': (a, b) => a >= b,
-  'pi': 3.141592653
-}]
-
-// function LambdaExpression (params, code, env) {
-//   this.params = params
-//   this.code = code
-//   this.env = env
-// }
+  return env[i][key]
+}
 
 // returns [data:(number || null), rem_code: string, err: string]
 function parseNumber (code) {
@@ -170,7 +157,7 @@ function evalDefine (code, env) {
     return [null, code, 'JispError: Expected ")"']
   }
 
-  envStack[0][sym] = val
+  env[0][sym] = val
 
   return [undefined, rcode.slice(match[0].length), '']
 }
@@ -188,12 +175,8 @@ function evalSymbol (code, env) {
     ]
   }
 
-  let i = env
-  while (i > 0 && envStack[i][match[1]] === undefined) {
-    i--
-  }
-
-  if (envStack[i][match[1]] === undefined) {
+  const envVal = searchEnv(env, match[1])
+  if (envVal === undefined) {
     return [
       null,
       code,
@@ -202,7 +185,7 @@ function evalSymbol (code, env) {
   }
 
   return [
-    envStack[i][match[1]],
+    envVal,
     code.slice(match[0].length),
     ''
   ]
@@ -272,7 +255,7 @@ function parseLambda (code, env) {
     return [null, code, 'JispError: Expected ")"']
   }
 
-  return [[params, scheme[0]], rcode.slice(match[0].length), '']
+  return [new LambdaExpression(params, scheme[0], {}), rcode.slice(match[0].length), '']
 }
 
 // returns [data:(array[values] || null), rem_code: string, err: string]
@@ -315,25 +298,17 @@ function evalLambda (code, env) {
   }
 
   // Create &| pass new environment data[0] and lExpr[0]
-  if (lExpr[0].length !== data[0].length) {
+  if (lExpr.params !== data[0].length) {
     return [null, code, 'JispError: More or less number of arguments']
   }
 
   const scope = {}
-  lExpr[0].forEach((k, i) => (scope[k] = data[0][i]))
+  lExpr.params.forEach((k, i) => (scope[k] = data[0][i]))
 
-  envStack.push(scope)
-  if (lExpr.length === 3) {
-    envStack.push(lExpr[2])
-    env++
-  }
-  const val = evalScheme(lExpr[1], env + 1)
-  if (Array.isArray(val[0])) {
-    val[0][2] = scope
-  }
-  envStack.pop()
-  if (lExpr.length === 3) {
-    envStack.pop()
+  let lEnv = [...env, scope, lExpr.env]
+  const val = evalScheme(lExpr.code, lEnv)
+  if (val instanceof LambdaExpression) {
+    val.env = scope
   }
 
   return val
@@ -353,7 +328,7 @@ function evalLambdaExp (code, env) {
   }
   // check expression evaluates to lambda
   let lambda = evalValue(code.slice(match[0].length), env)
-  if (Array.isArray(lambda[0])) {
+  if (lambda[0] instanceof LambdaExpression) {
     // iterate and eval proc-args while not valid end or err
     let [rcode, tmp, args] = [lambda[1], 0, []]
     while (tmp !== null) {
@@ -372,25 +347,17 @@ function evalLambdaExp (code, env) {
       ]
     }
 
-    if (lambda[0][0].length !== args.length) {
+    if (lambda[0].params.length !== args.length) {
       return [null, code, 'JispError: More or less number of arguments']
     }
 
     const scope = {}
-    lambda[0][0].forEach((k, i) => (scope[k] = args[i]))
+    lambda[0].params.forEach((k, i) => (scope[k] = args[i]))
 
-    envStack.push(scope)
-    if (lambda[0].length === 3) {
-      envStack.push(lambda[0][2])
-      env++
-    }
-    const val = evalScheme(lambda[0][1], env + 1)
-    if (Array.isArray(val[0])) {
-      val[0][2] = scope
-    }
-    envStack.pop()
-    if (lambda[0].length === 3) {
-      envStack.pop()
+    let lEnv = [...env, scope, lambda[0].env]
+    const val = evalScheme(lambda[0].code, lEnv)
+    if (val[0] instanceof LambdaExpression) {
+      val[0].env = scope
     }
 
     if (val[0] === null) {
@@ -436,12 +403,8 @@ function evalFunction (code, env) {
     ]
   }
 
-  let i = env
-  while (i > 0 && envStack[i][match[1]] === undefined) {
-    i--
-  }
-
-  if (envStack[i][proc] === undefined) { // check valid proc and args
+  let envVal = searchEnv(env, proc)
+  if (envVal === undefined) { // check valid proc and args
     return [
       null,
       code,
@@ -449,7 +412,7 @@ function evalFunction (code, env) {
     ]
   }
 
-  if (typeof envStack[i][proc] !== 'function') { // check valid function
+  if (typeof envVal !== 'function') { // check valid function
     return [
       null,
       code,
@@ -459,7 +422,7 @@ function evalFunction (code, env) {
 
   // if valid then call proc with args and return value with rcode
   return [
-    envStack[i][proc](...args),
+    envVal(...args),
     rcode.slice(match[0].length),
     ''
   ]
@@ -489,7 +452,7 @@ function evalValue (code, env) {
 }
 
 // (returns: (err, msg, code) || (noerr, data, rcode))
-const evalScheme = function (code, env = 0) {
+const evalScheme = function (code, env) {
   let [val, rcode, data, err] = [0, code, '', '']
 
   while (val !== null) {
@@ -506,4 +469,4 @@ const evalScheme = function (code, env = 0) {
   return [data, '', '']
 }
 
-module.exports = { evalScheme, parseScheme }
+module.exports = evalScheme
