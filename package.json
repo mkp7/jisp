@@ -1,0 +1,15 @@
+{
+  "name": "jisp",
+  "version": "1.0.0",
+  "description": "Jisp - A Scheme interpreter, a dialect of Lisp, in JavaScript, a project at GeekSkool",
+  "main": "main.js",
+  "repository": "github.com:mkp7/jisp",
+  "author": "Mehulkumar <m3hul.g4m3r@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^23.6.0"
+  },
+  "scripts": {
+    "test": "jest"
+  }
+}
