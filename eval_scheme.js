@@ -1,3 +1,55 @@
+const GlobalEnv = [{
+  '+': (env, ...nums) => (nums.length === 0 ? 0 : nums.reduce((a, b) => a + b)),
+  '-': (env, ...nums) => {
+    if (nums.length === 0) {
+      return 0
+    }
+
+    if (nums.length === 1) {
+      return -nums[0]
+    }
+
+    return nums.reduce((a, b) => a - b)
+  },
+  '*': (env, ...nums) => (nums.length === 0 ? 1 : nums.reduce((a, b) => a * b)),
+  '/': (env, ...nums) => (nums.length === 0 ? 0 : nums.reduce((a, b) => a / b)),
+  '=': (env, a, b) => a === b,
+  '<': (env, a, b) => a < b,
+  '<=': (env, a, b) => a <= b,
+  '>': (env, a, b) => a > b,
+  '>=': (env, a, b) => a >= b,
+  'car': (env, lst) => lst[0],
+  'cdr': (env, lst) => lst.slice(1),
+  'first': (env, lst) => lst[0],
+  'rest': (env, lst) => lst.slice(1),
+  'cons': (env, a, b) => [a, ...b],
+  'list': (env, ...a) => a,
+  'equal?': (env, a, b) => a === b,
+  'map': (env, fn, ls) => {
+    if (fn instanceof LambdaExpression) {
+      if (fn.params.length !== 1) {
+        return 'JispError: More or less number of arguments'
+      }
+      const valMap = ls.map(itm => {
+        const lScope = {}
+        lScope[fn.params[0]] = itm
+
+        const val = evalScheme(fn.code, [...env, lScope])
+        if (val[0] instanceof LambdaExpression) {
+          val[0].env = lScope
+        }
+
+        return val[0]
+      })
+
+      return valMap
+    }
+
+    return ls.map(fn)
+  },
+  'pi': 3.141592653
+}]
+
 function LambdaExpression (params, code, env) {
   this.params = params
   this.code = code
@@ -81,7 +133,7 @@ function evalConditional (code, env) {
 
   // meta parse true case and eval and return false case
   let scheme
-  if (value === false) {
+  if (value === false || (Array.isArray(value) && value.length === 0)) {
     scheme = parseScheme(rcode, env)
     if (scheme[0] === null) {
       return [null, code, 'JispError: Too few operands in form']
@@ -124,6 +176,29 @@ function evalConditional (code, env) {
   }
 
   return [value, rcode.slice(match[0].length), '']
+}
+
+// returns [data(scheme_exp || null), rem_code: string, err: string]
+function evalQuote (code, env) {
+  const ptr = /^(\s*\(\s*quote)(\s|\))/
+  const ptrC = /^\s*\)\s*/
+
+  let match = ptr.exec(code)
+  if (match === null) {
+    return [null, code, 'JispError: Not a Quote expression']
+  }
+
+  const val = parseScheme(code.slice(match[0].length))
+  if (val[0] === null) {
+    return val
+  }
+
+  match = ptrC.exec(val[1])
+  if (match === null) {
+    return [null, code, 'JispError: Expected ")"']
+  }
+
+  return [val[0], val[1].slice(match[0].length), '']
 }
 
 // returns [data:(undefined || null), rem_code: string, err: string]
@@ -280,7 +355,7 @@ function evalValues (code, env) {
 }
 
 // returns [data:(number || null), rem_code: string, err: string]
-function evalLambda (code, env) {
+function evalLambdaExpression (code, env) {
   const ptrStart = /^\s*\(/
   let match = ptrStart.exec(code)
   if (match === null) {
@@ -307,15 +382,15 @@ function evalLambda (code, env) {
 
   let lEnv = [...env, scope, lExpr.env]
   const val = evalScheme(lExpr.code, lEnv)
-  if (val instanceof LambdaExpression) {
-    val.env = scope
+  if (val[0] instanceof LambdaExpression) {
+    val[0].env = scope
   }
 
   return val
 }
 
 // (returns: (data || null, rcode))
-function evalLambdaExp (code, env) {
+function evalLambdaLiteral (code, env) {
   const ptrStart = /^\s*\(\s*/
 
   let match = ptrStart.exec(code)
@@ -422,7 +497,7 @@ function evalFunction (code, env) {
 
   // if valid then call proc with args and return value with rcode
   return [
-    envVal(...args),
+    envVal(env, ...args),
     rcode.slice(match[0].length),
     ''
   ]
@@ -433,10 +508,11 @@ const evaluaters = [
   parseBoolean,
   evalConditional,
   evalDefine,
+  evalQuote,
   evalSymbol,
   parseLambda,
-  evalLambda,
-  evalLambdaExp,
+  evalLambdaExpression,
+  evalLambdaLiteral,
   evalFunction
 ]
 
@@ -469,4 +545,4 @@ const evalScheme = function (code, env) {
   return [data, '', '']
 }
 
-module.exports = evalScheme
+module.exports = { evalScheme, GlobalEnv }
